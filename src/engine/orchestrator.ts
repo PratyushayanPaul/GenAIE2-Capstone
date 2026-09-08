@@ -81,20 +81,24 @@ export class HelpdeskOrchestrator {
     let searchQueries: string[] = [];
 
     // Check if live internet search grounding is requested or beneficial
-    const shouldEnableWebSearch = Boolean(config?.enableWebSearch) || (retrievalConfidence < 0.18 && !safetyHazard && config?.generationMode === 'gemini');
+    // Note: Safety hazards and high-urgency cases must strictly remain escalated to human support
+    const canAttemptWebResolution =
+      !safetyHazard &&
+      decision.action === Action.ESCALATE_LOW_CONFIDENCE &&
+      (Boolean(config?.enableWebSearch) || config?.generationMode === 'gemini');
 
-    if (decision.requires_human && !shouldEnableWebSearch) {
+    if (decision.requires_human && !canAttemptWebResolution) {
       answerText = safetyHazard
-        ? 'Draft suppressed — CRITICAL SAFETY HAZARD. Routed immediately to local facility / depot team for physical inspection.'
-        : 'Draft suppressed — ticket has been routed to a human IT technician since automated confidence was too low or the issue requires physical/in-person judgment.';
+        ? 'Resolution withheld — CRITICAL SAFETY HAZARD. Routed immediately to facility / depot team for physical inspection.'
+        : 'Resolution withheld — Ticket has been escalated to a human IT technician per enterprise routing policy.';
     } else {
-      if (config?.generationMode === 'gemini' || shouldEnableWebSearch) {
+      if (config?.generationMode === 'gemini' || canAttemptWebResolution) {
         const gen = await generateAiAnswer(
           query,
           sources,
           classification.category,
           classification.urgency,
-          shouldEnableWebSearch
+          canAttemptWebResolution
         );
         answerText = gen.answer;
         usedLlm = gen.used_llm;
@@ -104,14 +108,15 @@ export class HelpdeskOrchestrator {
         webSources = gen.web_sources || [];
         searchQueries = gen.search_queries || [];
 
-        // If live web search found a grounded resolution and it wasn't a safety hazard,
-        // we can provide the resolution with verified web citations
-        if (webGrounded && !safetyHazard && decision.requires_human) {
+        // If live web search found a grounded resolution for a low-confidence ticket
+        if (webGrounded && !safetyHazard && decision.action === Action.ESCALATE_LOW_CONFIDENCE) {
           decision = {
             action: Action.AUTO_RESOLVE,
-            reason: `Grounded Resolution Found via Live Internet Search (${webSources.length} web sources cited)`,
+            reason: `Grounded Resolution Found via Live Internet Search (${webSources.length} vendor sources cited)`,
             requires_human: false,
           };
+        } else if (decision.requires_human) {
+          answerText = 'Resolution withheld — Ticket escalated to human technician per enterprise routing policy.';
         }
       } else {
         const gen = generateTemplateAnswer(query, sources);

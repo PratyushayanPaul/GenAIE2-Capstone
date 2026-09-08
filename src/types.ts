@@ -141,3 +141,14 @@ export interface PipelineConfig {
   topK: number; // default 3
   enableWebSearch?: boolean; // When true or when local match is low, search internet with Gemini Google Search grounding
 }
+
+export interface SampleQuickTicket {
+  id: string;
+  label: string;
+  text: string;
+  category: Category;
+  scenarioType: 'resolve' | 'hazard' | 'urgency' | 'low_conf';
+  expected: Action;
+  badge: string;
+  description: string;
+}

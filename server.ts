@@ -520,47 +520,82 @@ Return ONLY a valid JSON object with:
 
 // Technician Copilot: Interactive follow-up & command generation with deterministic fallback
 app.post('/api/copilot', async (req, res) => {
-  const { query, resolution, promptType, customPrompt } = req.body;
+  const query = req.body.query || req.body.ticket_query || '';
+  const resolution = req.body.resolution || '';
+  const promptType = req.body.promptType || req.body.prompt_type || 'commands';
+  const customPrompt = req.body.customPrompt || '';
+  const category = req.body.category || 'Software';
+  const urgency = req.body.urgency || 'Medium';
+  const isEscalated = Boolean(req.body.isEscalated || (req.body.action && req.body.action !== 'AUTO_RESOLVE'));
+
+  const wrapResult = (text: string, mode: string = 'fallback') => {
+    return {
+      reply: text,
+      output: text,
+      mode,
+      success: true,
+    };
+  };
 
   // Local fallback templates for when rate-limited or offline
   const produceCopilotFallback = () => {
     const q = (query || '').toLowerCase();
     if (promptType === 'commands') {
+      if (/zoom|screen\s*rec|macos|mac|tcc|monterey|ventura|sonoma|sequoia/i.test(q)) {
+        return wrapResult(
+          `### macOS Terminal Diagnostic Commands\n\n1. **Reset Screen Capture Privacy Database**\n\`\`\`bash\ntccutil reset ScreenCapture us.zoom.xos\n\`\`\`\n\n2. **Directly Launch System Privacy Settings**\n\`\`\`bash\nopen "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"\n\`\`\`\n\n3. **Clear Stale Zoom Application Cache**\n\`\`\`bash\nrm -rf ~/Library/Caches/us.zoom.xos\n\`\`\``
+        );
+      }
+      if (/bitlocker|recovery\s*key|tpm|bios/i.test(q)) {
+        return wrapResult(
+          `### Windows PowerShell BitLocker Diagnostics (Admin)\n\n1. **Query BitLocker Drive Encryption Status**\n\`\`\`powershell\nmanage-bde -status C:\n\`\`\`\n\n2. **Verify TPM Health and Status**\n\`\`\`powershell\nGet-Tpm\n\`\`\`\n\n3. **Inspect Registered Key Protectors**\n\`\`\`powershell\n(Get-BitLockerVolume -MountPoint "C:").KeyProtector\n\`\`\``
+        );
+      }
       if (/print|spooler|queue/i.test(q)) {
-        return {
-          reply: `### Windows PowerShell Commands (Run as Administrator)\n\n1. **Stop Hung Print Spooler**\n\`\`\`powershell\nStop-Process -Name "spoolsv" -Force\n\`\`\`\n\n2. **Purge Stuck Print Jobs**\n\`\`\`powershell\nRemove-Item -Path "$env:SystemRoot\\System32\\spool\\PRINTERS\\*" -Force -Recurse\n\`\`\`\n\n3. **Restart Spooler Service**\n\`\`\`powershell\nStart-Service -Name "Spooler"\n\`\`\`\n\n4. **Verify Status**\n\`\`\`powershell\nGet-Service -Name "Spooler"\n\`\`\``,
-        };
+        return wrapResult(
+          `### Windows PowerShell Print Spooler Recovery (Admin)\n\n1. **Stop Hung Print Spooler Service**\n\`\`\`powershell\nStop-Service -Name "Spooler" -Force\n\`\`\`\n\n2. **Purge Stuck Print Jobs**\n\`\`\`powershell\nRemove-Item -Path "$env:SystemRoot\\System32\\spool\\PRINTERS\\*" -Force -Recurse\n\`\`\`\n\n3. **Restart Clean Spooler Service**\n\`\`\`powershell\nStart-Service -Name "Spooler"\nGet-Service -Name "Spooler"\n\`\`\``
+        );
       }
-      if (/zoom|screen\s*rec|macos|mac/i.test(q)) {
-        return {
-          reply: `### macOS Terminal Commands\n\n1. **Reset Screen Capture Privacy Permissions**\n\`\`\`bash\ntccutil reset ScreenCapture us.zoom.xos\n\`\`\`\n\n2. **Launch Security & Privacy Settings**\n\`\`\`bash\nopen "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"\n\`\`\``,
-        };
+      if (/vpn|wifi|network|dns|disconnect/i.test(q)) {
+        return wrapResult(
+          `### Network & VPN Diagnostics Commands\n\n1. **Flush & Re-register DNS Cache**\n\`\`\`powershell\nClear-DnsClientCache\nipconfig /flushdns\n\`\`\`\n\n2. **Release & Renew DHCP Lease**\n\`\`\`powershell\nipconfig /release\nipconfig /renew\n\`\`\`\n\n3. **Test VPN Gateway Latency & Port 443**\n\`\`\`powershell\nTest-NetConnection -ComputerName vpn.corporate.com -Port 443\n\`\`\`\n\n4. **macOS DNS Flush**\n\`\`\`bash\nsudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder\n\`\`\``
+        );
       }
-      if (/network|vpn|wifi|dns|disconnect/i.test(q)) {
-        return {
-          reply: `### Network Diagnostics Commands\n\n1. **Flush DNS Resolver Cache**\n\`\`\`cmd\nipconfig /flushdns\n\`\`\`\n\n2. **Release & Renew DHCP Lease**\n\`\`\`cmd\nipconfig /release\nipconfig /renew\n\`\`\`\n\n3. **Reset Winsock Catalog**\n\`\`\`cmd\nnetsh winsock reset\n\`\`\``,
-        };
+      if (/battery|drain|power|docking/i.test(q)) {
+        return wrapResult(
+          `### Battery & Hardware Power Diagnostics\n\n1. **Generate Windows Battery Health Report**\n\`\`\`powershell\npowercfg /batteryreport /output "$env:USERPROFILE\\Desktop\\battery-report.html"\nStart-Process "$env:USERPROFILE\\Desktop\\battery-report.html"\n\`\`\`\n\n2. **macOS Battery Cycle Count & Health**\n\`\`\`bash\nsystem_profiler SPPowerDataType | grep -A 10 "Health Information"\n\`\`\``
+        );
       }
-      return {
-        reply: `### Diagnostic Commands\n\n1. **Check Top Memory & CPU Processes**\n\`\`\`powershell\nGet-Process | Sort-Object CPU -Descending | Select-Object -First 10\n\`\`\`\n\n2. **Test Network Gateway Latency**\n\`\`\`cmd\nping 8.8.8.8 -n 4\n\`\`\``,
-      };
+      if (/memory|vmmem|docker|wsl|ram/i.test(q)) {
+        return wrapResult(
+          `### WSL2 & Docker Resource Management\n\n1. **Terminate Hung WSL2 Virtual Machines**\n\`\`\`powershell\nwsl --shutdown\n\`\`\`\n\n2. **Cap WSL2 Memory Consumption (.wslconfig)**\n\`\`\`powershell\nSet-Content "$env:USERPROFILE\\.wslconfig" "[wsl2]\`nmemory=4GB\`nprocessors=2"\n\`\`\`\n\n3. **Prune Dangling Docker Images**\n\`\`\`powershell\ndocker system prune -f\n\`\`\``
+        );
+      }
+      return wrapResult(
+        `### Diagnostic Commands\n\n1. **Query Host System Information**\n\`\`\`powershell\nGet-ComputerInfo | Select-Object OsName, OsVersion, TotalPhysicalMemory\n\`\`\`\n\n2. **Test Network Gateway Latency**\n\`\`\`powershell\nTest-NetConnection -ComputerName 8.8.8.8 -InformationLevel Detailed\n\`\`\``
+      );
     }
 
     if (promptType === 'customer_reply') {
-      return {
-        reply: `Hi there,\n\nThank you for reaching out to IT Support. Here are the recommended steps to resolve your issue:\n\n${resolution || 'Please follow our standard troubleshooting documentation.'}\n\nIf you need additional assistance or if the issue persists, please reply directly to this ticket.\n\nBest regards,\nCorporate IT Helpdesk Team`,
-      };
+      if (isEscalated) {
+        return wrapResult(
+          `Hi there,\n\nThank you for contacting Corporate IT Support regarding: "${query}".\n\nYour ticket has been escalated to our Tier-2 Engineering team for specialized investigation (Priority: ${urgency}). Because this issue requires elevated permissions or in-person technical inspection, a technician will review your case and reach out to you directly.\n\nTicket Status: Escalated to Tier-2 Engineering\n\nBest regards,\nCorporate IT Service Desk`
+        );
+      }
+      return wrapResult(
+        `Hi there,\n\nThank you for reaching out to IT Support. Here are the verified troubleshooting steps for your request:\n\n${resolution || 'Please follow our standard corporate troubleshooting documentation.'}\n\nIf you need additional assistance or if the issue persists, please reply directly to this ticket.\n\nBest regards,\nCorporate IT Helpdesk Team`
+      );
     }
 
     if (promptType === 'escalation_note') {
-      return {
-        reply: `### Tier-2 Escalation Handover Note\n\n- **Ticket Summary**: ${query}\n- **Initial Troubleshooting**: Tier-1 verified knowledge base matching and guided user through self-service recovery.\n- **Proposed Action**: ${resolution || 'Further hardware/profile inspection required.'}\n- **Dispatch Request**: Hardware inspection / elevated administrative access required.`,
-      };
+      return wrapResult(
+        `### Tier-2 Escalation Handover Note\n\n- **Ticket Summary**: ${query}\n- **Domain / Priority**: Category: ${category} | Urgency: ${urgency}\n- **Triage Result**: Automated resolution withheld per enterprise safety/governance policy.\n- **Dispatch Request**: Hardware inspection / elevated administrative access required.\n- **Technician Actions**: Verify device asset tag, inspect diagnostic logs, or provide replacement equipment.`
+      );
     }
 
-    return {
-      reply: `Technician advisory: Issue identified as "${query}". Recommended next step: ${resolution || 'Verify hardware and network connectivity.'}`,
-    };
+    return wrapResult(
+      `Technician advisory: Issue identified as "${query}". Category: ${category}, Urgency: ${urgency}. Recommended next step: ${resolution || 'Verify hardware and network connectivity.'}`
+    );
   };
 
   if (isRateLimited()) {
@@ -577,9 +612,13 @@ app.post('/api/copilot', async (req, res) => {
     if (promptType === 'commands') {
       instruction = `Provide the exact Windows PowerShell / Command Prompt or macOS terminal commands needed to troubleshoot or resolve: "${query}". Format as copyable commands with a one-sentence explanation each.`;
     } else if (promptType === 'customer_reply') {
-      instruction = `Draft a polite, professional Slack/Email response to the employee about their ticket: "${query}". Include the proposed resolution: "${resolution}".`;
+      if (isEscalated) {
+        instruction = `Draft a polite, professional Slack/Email response to the employee about their ticket: "${query}". Explain that because their issue requires specialized Tier-2 review or physical/administrative authorization, the ticket has been escalated to Tier-2 support and a technician will contact them directly. Do NOT provide an unverified DIY solution.`;
+      } else {
+        instruction = `Draft a polite, professional Slack/Email response to the employee about their ticket: "${query}". Include the proposed resolution: "${resolution}".`;
+      }
     } else if (promptType === 'escalation_note') {
-      instruction = `Draft an internal Tier-2 escalation handover note for ticket: "${query}". Summarize what L1 troubleshooting has been identified and what physical/depot inspection is requested.`;
+      instruction = `Draft an internal Tier-2 escalation handover note for ticket: "${query}". Category is ${category}, Urgency is ${urgency}. Summarize what initial triage was done and what physical or elevated technician inspection is requested.`;
     } else {
       instruction = customPrompt || `Help the IT technician with this ticket: "${query}".`;
     }
@@ -592,9 +631,12 @@ app.post('/api/copilot', async (req, res) => {
       4000
     );
 
-    return res.json({
-      reply: response.text || 'No response generated.',
-    });
+    const generated = response.text || '';
+    if (!generated) {
+      return res.json(produceCopilotFallback());
+    }
+
+    return res.json(wrapResult(generated, 'gemini'));
   } catch (err) {
     markRateLimitEncountered(err);
     return res.json(produceCopilotFallback());

@@ -19,10 +19,11 @@ import {
   Globe,
   ExternalLink,
   Database,
-  BookmarkPlus,
   CheckCircle2,
+  HelpCircle,
 } from 'lucide-react';
 import { redactPii } from '../engine/textUtils';
+import { generateClientSideCopilot } from '../engine/copilotEngine';
 
 interface ResultPanelProps {
   result: TicketResolution;
@@ -69,6 +70,8 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
   const [copilotType, setCopilotType] = useState<string | null>(null);
   const [copilotCopied, setCopilotCopied] = useState(false);
 
+  const isEscalated = result.action !== Action.AUTO_RESOLVE || result.requires_human;
+
   const actionMeta = ACTION_CONFIG[result.action] || {
     label: result.action,
     badgeClass: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
@@ -82,7 +85,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
   };
 
   const handleIngestIntoKb = async () => {
-    if (ingesting || ingested || !result.answer) return;
+    if (ingesting || ingested || !result.answer || isEscalated) return;
     setIngesting(true);
 
     try {
@@ -122,20 +125,31 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          query: result.query,
           ticket_query: result.query,
-          resolution: result.answer,
+          resolution: isEscalated ? '' : result.answer,
           category: result.category,
           urgency: result.urgency,
+          promptType,
           prompt_type: promptType,
+          isEscalated,
+          action: result.action,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setCopilotOutput(data.output);
+        const text = data.output || data.reply;
+        if (text && text.trim()) {
+          setCopilotOutput(text);
+          return;
+        }
       }
+      // Fall back to robust client-side copilot generator
+      setCopilotOutput(generateClientSideCopilot(promptType, result, isEscalated));
     } catch {
-      // ignore
+      // Local client-side synthesis fallback (e.g. running offline or without backend)
+      setCopilotOutput(generateClientSideCopilot(promptType, result, isEscalated));
     } finally {
       setCopilotLoading(false);
     }
@@ -199,7 +213,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
           <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
             <div
               className={`h-full transition-all duration-500 ${
-                result.retrieval_confidence >= 0.15
+                result.retrieval_confidence >= 0.15 && !isEscalated
                   ? 'bg-emerald-500'
                   : 'bg-amber-500'
               }`}
@@ -208,93 +222,160 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
           </div>
         </div>
 
-        {/* Reason / Escalation note */}
+        {/* Reason / Policy Check */}
         <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 rounded-lg text-xs text-slate-700 dark:text-slate-300 font-sans leading-relaxed">
           <strong className="font-semibold text-slate-900 dark:text-slate-100">Decision policy: </strong>
           {result.reason}
         </div>
 
-        {/* Proposed Resolution */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Proposed Resolution
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleIngestIntoKb}
-                disabled={ingesting || ingested}
-                className="text-xs font-mono text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 disabled:opacity-60 transition-colors shadow-2xs"
-                title="Save resolution to Knowledge Base"
-              >
-                {ingested ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">Saved to KB!</span>
-                  </>
-                ) : (
-                  <>
-                    <Database className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                    <span>{ingesting ? 'Saving...' : 'Save to KB'}</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={copyAnswer}
-                className="text-xs font-mono text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 transition-colors shadow-2xs"
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                    <span className="text-emerald-600 dark:text-emerald-400">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div className="text-slate-800 dark:text-slate-200 text-sm leading-relaxed p-4 rounded-lg bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200/90 dark:border-slate-800 font-sans whitespace-pre-line">
-            {result.answer}
-          </div>
-
-          {/* Web Citations Bar */}
-          {result.web_sources && result.web_sources.length > 0 && (
-            <div className="p-3 rounded-lg bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60 flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-blue-700 dark:text-blue-300 flex items-center gap-1.5 font-semibold">
-                <Globe className="w-3.5 h-3.5" />
-                Live Vendor Citations:
+        {/* Conditional Display: Escalation Handover Notice vs. Auto-Resolved Proposed Resolution */}
+        {isEscalated ? (
+          /* For escalated cases: do NOT show proposed solution */
+          <div className="space-y-3 p-4 rounded-xl border border-amber-200/90 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/60 dark:border-amber-900/40 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300">
+                  <ShieldAlert className="w-4 h-4" />
+                </span>
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                    Resolution Withheld · Escalated to Human Support
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Automated solution is suppressed per enterprise governance and safety policy
+                  </p>
+                </div>
+              </div>
+              <span className="self-start sm:self-auto px-2.5 py-0.5 rounded text-[11px] font-mono font-medium bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-800">
+                Routed to Human Queue
               </span>
-              {result.web_sources.map((s, idx) => (
-                <a
-                  key={idx}
-                  href={s.uri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 bg-white dark:bg-slate-900 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 font-mono text-[11px] shadow-2xs"
-                >
-                  <ExternalLink className="w-2.5 h-2.5" />
-                  <span>{s.title || s.uri}</span>
-                </a>
-              ))}
             </div>
-          )}
-        </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-white dark:bg-slate-900/90 rounded-lg border border-slate-200/80 dark:border-slate-800 space-y-1 shadow-2xs">
+                <span className="text-[11px] font-mono text-slate-400 uppercase">Assigned Destination Queue</span>
+                <div className="font-semibold text-slate-900 dark:text-slate-100">
+                  {result.action === Action.ESCALATE_SAFETY
+                    ? 'Emergency Safety & Facilities Dispatch'
+                    : result.action === Action.ESCALATE_HIGH_URGENCY
+                    ? 'Tier-2 Priority Operations Queue'
+                    : 'Tier-1 Service Desk Investigation'}
+                </div>
+              </div>
+
+              <div className="p-3 bg-white dark:bg-slate-900/90 rounded-lg border border-slate-200/80 dark:border-slate-800 space-y-1 shadow-2xs">
+                <span className="text-[11px] font-mono text-slate-400 uppercase">Target SLA Window</span>
+                <div className="font-semibold text-slate-900 dark:text-slate-100">
+                  {result.action === Action.ESCALATE_SAFETY
+                    ? '< 15 Minutes (P1 Hazard Dispatch)'
+                    : result.action === Action.ESCALATE_HIGH_URGENCY
+                    ? '< 1 Hour (P2 High Priority Review)'
+                    : '< 4 Hours (Standard Technical Intake)'}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white dark:bg-slate-900/90 rounded-lg border border-slate-200/80 dark:border-slate-800 text-xs space-y-2 shadow-2xs">
+              <span className="font-semibold text-slate-900 dark:text-slate-100 block">
+                Technician Action Protocol:
+              </span>
+              <ul className="space-y-1.5 text-slate-600 dark:text-slate-300 list-disc list-inside">
+                <li>Verify employee identity and device asset serial number in CMDB.</li>
+                {result.action === Action.ESCALATE_SAFETY ? (
+                  <li className="text-rose-600 dark:text-rose-400 font-semibold">
+                    DO NOT advise powering on equipment. Quarantine device immediately and dispatch on-site safety engineer.
+                  </li>
+                ) : (
+                  <li>Initiate contact with employee via Microsoft Teams or phone for interactive intake.</li>
+                )}
+                <li>Use the Technical Copilot tools below to generate diagnostic commands or a formal handover note.</li>
+              </ul>
+            </div>
+          </div>
+        ) : (
+          /* Proposed Resolution (shown only for auto-resolved cases) */
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Proposed Resolution
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleIngestIntoKb}
+                  disabled={ingesting || ingested}
+                  className="text-xs font-mono text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 disabled:opacity-60 transition-colors shadow-2xs"
+                  title="Save resolution to Knowledge Base"
+                >
+                  {ingested ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">Saved to KB!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Database className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <span>{ingesting ? 'Saving...' : 'Save to KB'}</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={copyAnswer}
+                  className="text-xs font-mono text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 transition-colors shadow-2xs"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-emerald-600 dark:text-emerald-400">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="text-slate-800 dark:text-slate-200 text-sm leading-relaxed p-4 rounded-lg bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200/90 dark:border-slate-800 font-sans whitespace-pre-line">
+              {result.answer}
+            </div>
+
+            {/* Web Citations Bar */}
+            {result.web_sources && result.web_sources.length > 0 && (
+              <div className="p-3 rounded-lg bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60 flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-blue-700 dark:text-blue-300 flex items-center gap-1.5 font-semibold">
+                  <Globe className="w-3.5 h-3.5" />
+                  Live Vendor Citations:
+                </span>
+                {result.web_sources.map((s, idx) => (
+                  <a
+                    key={idx}
+                    href={s.uri}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 bg-white dark:bg-slate-900 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 font-mono text-[11px] shadow-2xs"
+                  >
+                    <ExternalLink className="w-2.5 h-2.5" />
+                    <span>{s.title || s.uri}</span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Technician Copilot Quick Actions */}
-        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
+        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3" id="technician-copilot-section">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               Technician Copilot Actions
             </span>
-            <span className="text-[11px] font-mono text-slate-400">
-              One-click synthesis
+            <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" />
+              Active Locally & Server
             </span>
           </div>
 
@@ -314,7 +395,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium transition-colors disabled:opacity-50 shadow-2xs"
             >
               <Mail className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Draft Employee Reply</span>
+              <span>{isEscalated ? 'Draft Escalation Notice' : 'Draft Employee Reply'}</span>
             </button>
 
             <button
@@ -344,13 +425,13 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
                 </span>
                 <button
                   onClick={copyCopilot}
-                  className="text-xs font-mono text-slate-500 hover:text-blue-600 flex items-center gap-1"
+                  className="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
                 >
                   {copilotCopied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                   <span>{copilotCopied ? 'Copied' : 'Copy'}</span>
                 </button>
               </div>
-              <div className="text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-pre-wrap bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-800">
+              <div className="text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-pre-wrap bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-800 leading-relaxed">
                 {copilotOutput}
               </div>
             </div>
