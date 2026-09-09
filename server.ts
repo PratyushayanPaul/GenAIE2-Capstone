@@ -1,3 +1,17 @@
+/**
+ * Express Backend Server & API Proxy
+ * IT Helpdesk RAG + Agent Architecture
+ *
+ * Capabilities:
+ * 1. Health & Telemetry (/api/health): Verifies Gemini credentials, KB count, and rate limit status.
+ * 2. Dynamic Knowledge Base (/api/kb): Serves standard enterprise KB documents and vectors.
+ * 3. Grounded Gemini Proxy (/api/generate): Provides secure server-side LLM calls using @google/genai,
+ *    equipped with TTL caching, automatic 40-second cooldown recovery on 429 quota exhaustion,
+ *    and Google Search grounding for low-confidence or zero-day issues.
+ * 4. Autonomous Web Researcher (/api/kb/research): Scrapes vendor solutions to dynamically expand the KB.
+ * 5. Vite Middleware Integration: Serves SPA client during development and static assets in production.
+ */
+
 import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
@@ -69,6 +83,11 @@ const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 // ---------------------------------------------------------------------------
 // API Routes
 // ---------------------------------------------------------------------------
+
+/**
+ * GET /api/health
+ * System diagnostics endpoint returning model version, KB statistics, and cooldown status.
+ */
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -82,6 +101,10 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+/**
+ * GET /api/kb
+ * Returns the active in-memory knowledge base documents and atomic chunks.
+ */
 app.get('/api/kb', (_req, res) => {
   res.json({
     documents: workingKbDocuments,
@@ -89,11 +112,17 @@ app.get('/api/kb', (_req, res) => {
   });
 });
 
+/**
+ * GET /api/kpi
+ * Returns benchmark SLA and business impact metrics.
+ */
 app.get('/api/kpi', (_req, res) => {
   res.json(DEFAULT_KPI_SUMMARY);
 });
 
-// Helper for extractive fallback
+/**
+ * Helper generating deterministic extractive resolution when Gemini API is unavailable or rate-limited.
+ */
 function produceExtractiveFallback(contextChunks: any[], note?: string) {
   if (!contextChunks || contextChunks.length === 0) {
     return {
@@ -111,7 +140,11 @@ function produceExtractiveFallback(contextChunks: any[], note?: string) {
   };
 }
 
-// Grounded answer generation using Gemini API (with web search grounding, caching & rate-limit resilience)
+/**
+ * POST /api/generate
+ * Synthesizes grounded support response using Google Gen AI SDK.
+ * Features automatic fallback on quota exhaustion and live web grounding via Google Search.
+ */
 app.post('/api/generate', async (req, res) => {
   try {
     const { query, contextChunks, category, urgency, enableWebSearch } = req.body;

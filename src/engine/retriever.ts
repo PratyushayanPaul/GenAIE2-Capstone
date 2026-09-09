@@ -1,11 +1,21 @@
 /**
- * Phase 3a: Precision Hybrid Retriever
- * Combines L2-normalized TF-IDF vector similarity with IT-domain term boosting
+ * Precision Hybrid Retriever
+ * IT Helpdesk RAG + Agent Architecture
+ *
+ * Architecture:
+ * - Combines L2-normalized TF-IDF vector similarity with specialized IT domain keyword boosting.
+ * - Bridges the lexical gap for technical acronyms (e.g., 'SSPR', '802.1x', 'BitLocker', 'MFA', 'CrowdStrike').
+ * - Formula: Combined Score = (Vector Similarity * 0.7) + (Keyword Boost * 0.3)
+ * - Out-of-domain queries (vectorSim < 0.05 with 0 keywords) are severely penalized to prevent false positives.
  */
 
 import { TfidfEmbedder, defaultEmbedder } from './embedder';
 import { RetrievedChunk } from '../types';
 
+/**
+ * Domain boost dictionary mapping KB article IDs to high-specificity technical terms.
+ * When present in user queries, these terms provide a calibrated relevance boost.
+ */
 const DOMAIN_BOOST_MAP: Record<string, string[]> = {
   'KB-ACC-001': ['password', 'reset', 'sspr', 'forgot', 'passphrase', 'identity'],
   'KB-ACC-002': ['mfa', 'push', 'authenticator', '2fa', 'code', 'rolling'],
@@ -64,16 +74,26 @@ export class Retriever {
     this.embedder = embedder;
   }
 
+  /**
+   * Retrieves top-K most relevant knowledge base chunks for a user query.
+   *
+   * @param queryText - Raw or sanitized inquiry
+   * @param topK - Number of top ranked chunks to return (default: 3)
+   * @returns Array of RetrievedChunk ranked by blended similarity descending
+   */
   public retrieve(queryText: string, topK: number = 3): RetrievedChunk[] {
+    // Generate normalized TF-IDF vector for the incoming query
     const queryVec = this.embedder.embed(queryText);
     const chunks = this.embedder.getChunks();
     const chunkVectors = this.embedder.getChunkEmbeddings();
     const lowerQuery = queryText.toLowerCase();
 
+    // Score every chunk in the indexed corpus
     const scored = chunks.map((chunk, idx) => {
+      // Step A: Cosine dot-product similarity (both query and chunk vectors are L2-normalized)
       const vectorSim = this.embedder.dotProduct(queryVec, chunkVectors[idx]);
 
-      // Calculate domain keyword boost
+      // Step B: Calculate domain-specific keyword boost
       let keywordBoost = 0;
       const boostKeywords = DOMAIN_BOOST_MAP[chunk.kb_id] || [];
       for (const kw of boostKeywords) {
@@ -81,12 +101,14 @@ export class Retriever {
           keywordBoost += 0.15;
         }
       }
+      // Cap maximum keyword boost to preserve vector semantics
       keywordBoost = Math.min(0.45, keywordBoost);
 
-      // Blended precision score
+      // Step C: Blended precision score (70% vector semantics, 30% technical lexical boost)
       let combinedScore = vectorSim * 0.7 + keywordBoost * 0.3;
 
-      // Penalize completely unrelated queries
+      // Step D: Out-of-domain penalty
+      // Prevent unrelated queries (e.g., philosophy, cooking) from scoring above threshold
       if (vectorSim < 0.05 && keywordBoost === 0) {
         combinedScore = Math.min(0.04, vectorSim);
       }
@@ -101,10 +123,14 @@ export class Retriever {
       };
     });
 
+    // Rank candidates in descending order of similarity
     scored.sort((a, b) => b.similarity - a.similarity);
+
+    // Return the top-K highest scoring chunks
     return scored.slice(0, topK);
   }
 }
 
 export const defaultRetriever = new Retriever();
+
 

@@ -1,10 +1,15 @@
 /**
- * Phase 4c: Agent Orchestrator
- * IT Helpdesk RAG + Agent Capstone Project
+ * Agent Orchestrator: Central Pipeline Coordinator
+ * IT Helpdesk RAG + Agent Architecture
  *
- * Sequence:
- * New ticket -> Classification agent -> Retrieval agent -> Response generation
- *            -> Decision agent -> (Auto-resolve | Escalate to human)
+ * Sequence of Execution:
+ * 1. PII Sanitization & Text Normalization -> Redacts passwords, tokens, emails, IPs.
+ * 2. Instant Local Safety & Entity Extraction -> Intercepts fire/battery risks before API calls.
+ * 3. Step 1 (Classification Agent) -> Nearest-centroid domain prediction & urgency heuristic.
+ * 4. Step 2 (Retrieval Agent) -> Hybrid TF-IDF vector + domain keyword boost search.
+ * 5. Step 4 (Decision Policy Agent) -> Evaluates confidence vs. configurable thresholds.
+ * 6. Step 3 (Response Generation) -> Grounded Gemini 2.5/3 synthesis or extractive template fallback.
+ * 7. Trace Compilation -> Aggregates telemetry, sources, and audit rationale for the UI.
  */
 
 import { ClassificationAgent, defaultClassifier } from './classificationAgent';
@@ -30,14 +35,25 @@ export class HelpdeskOrchestrator {
     this.decisionAgent = decisionAgent;
   }
 
+  /**
+   * Orchestrates the complete processing cycle for an incoming IT support ticket.
+   *
+   * @param rawQuery - Unsanitized user prompt or ticket text
+   * @param config - Optional overrides for confidence thresholds, generation mode, and top-K
+   * @returns Detailed TicketResolution containing classification, sources, action, and answer
+   */
   public async handleTicket(
     rawQuery: string,
     config?: Partial<PipelineConfig>
   ): Promise<TicketResolution> {
     const startTime = performance.now();
+
+    // Stage 0: PII Sanitization & Normalization
+    // Strip leading/trailing noise and mask sensitive tokens (SSNs, secrets, API keys)
     const query = redactPii(cleanText(rawQuery));
 
-    // Configure decision thresholds if provided
+    // Dynamic Threshold Synchronization
+    // Update the decision agent policy thresholds if customized in the UI
     if (config?.autoResolveThreshold !== undefined || config?.highUrgencyThreshold !== undefined) {
       this.decisionAgent.setConfig({
         autoResolveThreshold: config.autoResolveThreshold,
@@ -47,22 +63,31 @@ export class HelpdeskOrchestrator {
 
     const topK = config?.topK ?? 3;
 
-    // Instant Local Safety & Entity Extraction (Zero-quota, sub-millisecond)
+    // Stage 0b: Sub-Millisecond Safety & Hardware Hazard Check
+    // Evaluates regex patterns for swollen batteries, smoke, electrical sparks, and fires.
+    // This runs completely client-side to ensure deterministic safety without quota delays.
     const localAnalysis = extractEntitiesAndSafety(query);
     const extractedEntities = localAnalysis.entities;
     const safetyHazard = localAnalysis.safety_hazard;
 
     // Step 1: Classification Agent
+    // Calculates TF-IDF query embedding, determines nearest centroid category,
+    // and checks keyword dictionaries for urgency signals.
     const classification = this.classifier.classify(query);
 
-    // Step 2: Retrieval Agent
+    // Step 2: Precision Retrieval Agent
+    // Performs hybrid vector search across pre-computed KB chunks, blending cosine
+    // similarity with domain boost terms (e.g. 'BitLocker', '802.1x', 'CrowdStrike').
     const sources = this.retriever.retrieve(query, topK);
     const retrievalConfidence = sources.length > 0 ? sources[0].similarity : 0.0;
 
-    // Step 4 (Logic): Decision Agent
+    // Step 4 (Preliminary Logic): Decision Agent Policy Evaluation
+    // Evaluates retrieval confidence against the auto-resolve threshold and urgency rules.
     let decision = this.decisionAgent.decide(retrievalConfidence, classification);
 
-    // Enforce safety hazard escalation if detected
+    // Hard Safety Override:
+    // Any physical danger instantly forces ESCALATE_SAFETY and demands human physical dispatch,
+    // overriding high vector similarity to avoid providing hazardous DIY instructions.
     if (safetyHazard) {
       decision = {
         action: Action.ESCALATE_SAFETY,
@@ -71,7 +96,7 @@ export class HelpdeskOrchestrator {
       };
     }
 
-    // Step 3: Response Generation
+    // Step 3: Response Synthesis & Grounding
     let answerText = '';
     let usedLlm = false;
     let rateLimited = false;
@@ -80,18 +105,22 @@ export class HelpdeskOrchestrator {
     let webSources: Array<{ title: string; uri: string }> = [];
     let searchQueries: string[] = [];
 
-    // Check if live internet search grounding is requested or beneficial
-    // Note: Safety hazards and high-urgency cases must strictly remain escalated to human support
+    // Live Web Research Qualification:
+    // If local KB confidence is low, and web search is enabled, the agent can query Google Search
+    // grounding via Gemini to discover newly documented vendor bugs or release notes.
+    // Note: Physical hazards and high-urgency outages are strictly prevented from web resolution.
     const canAttemptWebResolution =
       !safetyHazard &&
       decision.action === Action.ESCALATE_LOW_CONFIDENCE &&
       (Boolean(config?.enableWebSearch) || config?.generationMode === 'gemini');
 
     if (decision.requires_human && !canAttemptWebResolution) {
+      // Policy Gate: Withhold automated resolution when human escalation is required
       answerText = safetyHazard
         ? 'Resolution withheld — CRITICAL SAFETY HAZARD. Routed immediately to facility / depot team for physical inspection.'
         : 'Resolution withheld — Ticket has been escalated to a human IT technician per enterprise routing policy.';
     } else {
+      // Generate grounded resolution either via Gemini API or local template extraction
       if (config?.generationMode === 'gemini' || canAttemptWebResolution) {
         const gen = await generateAiAnswer(
           query,
@@ -108,7 +137,8 @@ export class HelpdeskOrchestrator {
         webSources = gen.web_sources || [];
         searchQueries = gen.search_queries || [];
 
-        // If live web search found a grounded resolution for a low-confidence ticket
+        // If live web search succeeded in grounding a low-confidence ticket with trusted vendor sources,
+        // promote the action to AUTO_RESOLVE with citation audit details.
         if (webGrounded && !safetyHazard && decision.action === Action.ESCALATE_LOW_CONFIDENCE) {
           decision = {
             action: Action.AUTO_RESOLVE,
@@ -119,12 +149,14 @@ export class HelpdeskOrchestrator {
           answerText = 'Resolution withheld — Ticket escalated to human technician per enterprise routing policy.';
         }
       } else {
+        // Deterministic template extraction from top retrieved KB chunk
         const gen = generateTemplateAnswer(query, sources);
         answerText = gen.answer;
         usedLlm = false;
       }
     }
 
+    // Telemetry and Tracking Metadata
     const elapsedMs = Math.round((performance.now() - startTime) * 10) / 10;
     const ticketId = Math.random().toString(36).substring(2, 10).toUpperCase();
 
@@ -155,3 +187,4 @@ export class HelpdeskOrchestrator {
 }
 
 export const defaultOrchestrator = new HelpdeskOrchestrator();
+

@@ -24,9 +24,13 @@ import {
 } from 'lucide-react';
 import { redactPii } from '../engine/textUtils';
 import { generateClientSideCopilot } from '../engine/copilotEngine';
+import { TicketStatusBadge } from './TicketStatusBadge';
+import { TicketLifecycleState } from '../types';
 
 interface ResultPanelProps {
   result: TicketResolution;
+  status?: TicketLifecycleState;
+  onStatusChange?: (newStatus: TicketLifecycleState) => void;
 }
 
 const ACTION_CONFIG: Record<
@@ -55,7 +59,7 @@ const ACTION_CONFIG: Record<
   },
 };
 
-export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
+export const ResultPanel: React.FC<ResultPanelProps> = ({ result, status, onStatusChange }) => {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showPiiRedaction, setShowPiiRedaction] = useState(false);
@@ -175,13 +179,22 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs space-y-4">
         {/* Header: Action Badge & Confidence */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <span
               className={`inline-flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold border ${actionMeta.badgeClass}`}
             >
               {actionMeta.icon}
               <span>{actionMeta.label}</span>
             </span>
+
+            {status && (
+              <TicketStatusBadge
+                status={status}
+                size="md"
+                interactive={Boolean(onStatusChange)}
+                onStatusChange={onStatusChange}
+              />
+            )}
 
             {result.web_grounded && (
               <span className="inline-flex items-center gap-1 text-[11px] font-mono text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900 px-2 py-0.5 rounded-md font-medium">

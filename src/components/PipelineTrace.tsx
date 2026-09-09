@@ -177,8 +177,34 @@ export const PipelineTrace: React.FC<PipelineTraceProps> = ({ result }) => {
         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
       ),
       content: (
-        <div className="text-xs font-sans text-slate-700 dark:text-slate-300">
-          {result.reason}
+        <div className="text-xs font-sans space-y-2 text-slate-700 dark:text-slate-300">
+          <div>{result.reason}</div>
+          <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-slate-500 dark:text-slate-400">Decision Confidence:</span>
+              <span className="font-semibold text-slate-900 dark:text-slate-100">
+                {result.safety_hazard ? '100% (Safety Override)' : `${Math.round(result.retrieval_confidence * 100)}%`}
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  result.action === 'AUTO_RESOLVE'
+                    ? 'bg-emerald-500'
+                    : result.safety_hazard
+                    ? 'bg-rose-500'
+                    : 'bg-amber-500'
+                }`}
+                style={{
+                  width: `${
+                    result.safety_hazard
+                      ? 100
+                      : Math.min(100, Math.max(0, Math.round(result.retrieval_confidence * 100)))
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
         </div>
       ),
     },
