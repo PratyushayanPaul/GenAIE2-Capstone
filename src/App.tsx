@@ -12,7 +12,7 @@ import { ThresholdTuner } from './components/ThresholdTuner';
 import { PipelineConfig } from './types';
 import { RAW_KB_DOCUMENTS } from './data/kbData';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
-import { Layers, Activity, GitBranch, ShieldCheck } from 'lucide-react';
+import { Layers, Activity, GitBranch, ShieldCheck, Download } from 'lucide-react';
 
 function AppContent() {
   const { theme } = useTheme();
@@ -101,6 +101,16 @@ function AppContent() {
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>Safety Override Active</span>
             </span>
+            <a
+              href="/api/download-pptx"
+              download="IT_Helpdesk_Presentation.pptx"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-600/10 hover:bg-blue-600/20 text-blue-600 dark:text-blue-400 font-medium transition-colors cursor-pointer border border-blue-500/20"
+              title="Download presentation slide deck in PowerPoint .pptx format"
+              id="footer-download-pptx"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download .pptx</span>
+            </a>
           </div>
         </div>
       </footer>

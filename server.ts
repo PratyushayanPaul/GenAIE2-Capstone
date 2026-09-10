@@ -84,6 +84,24 @@ const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 // API Routes
 // ---------------------------------------------------------------------------
 
+const pptxFilePath = path.resolve(process.cwd(), 'public', 'IT_Helpdesk_Presentation.pptx');
+
+/**
+ * GET /api/download-pptx & /IT_Helpdesk_Presentation.pptx
+ * Forces attachment download with standard PowerPoint MIME type.
+ */
+app.get('/api/download-pptx', (_req, res) => {
+  res.download(pptxFilePath, 'IT_Helpdesk_Presentation.pptx');
+});
+
+app.get('/IT_Helpdesk_Presentation.pptx', (_req, res) => {
+  res.download(pptxFilePath, 'IT_Helpdesk_Presentation.pptx');
+});
+
+app.get('/download', (_req, res) => {
+  res.download(pptxFilePath, 'IT_Helpdesk_Presentation.pptx');
+});
+
 /**
  * GET /api/health
  * System diagnostics endpoint returning model version, KB statistics, and cooldown status.
